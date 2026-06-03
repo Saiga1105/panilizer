@@ -1,0 +1,50 @@
+{
+  "WE973W4Z": {
+    "Opnametype": "Cyclorama",
+    "Opnamedatum": "2024-02-25T14:06:00",
+    "X": 72561.76,
+    "sigma_X": 0.01,
+    "Y": 167996.56,
+    "sigma_Y": 0.01,
+    "Z": 20.98,
+    "sigma_Z": 0.01,
+    "Yaw": 0.85,
+    "sigma_Yaw": 0.01,
+    "Heading": -23.01,
+    "Coordinaatsysteem": "EPSG:31370 - Belge 1972 / Belgian Lambert 72",
+    "Hoogtesysteem": 5710,
+    "Camerahoogte (m)": 2.07
+  },
+  "WE973W4Y": {
+    "Opnametype": "Cyclorama",
+    "Opnamedatum": "2024-02-25T14:06:00",
+    "X": 72563.68,
+    "sigma_X": 0.01,
+    "Y": 167991.95,
+    "sigma_Y": 0.01,
+    "Z": 20.99,
+    "sigma_Z": 0.01,
+    "Yaw": 0.85,
+    "sigma_Yaw": 0.01,
+    "Heading": -24.26,
+    "Coordinaatsysteem": "EPSG:31370 - Belge 1972 / Belgian Lambert 72",
+    "Hoogtesysteem": 5710,
+    "Camerahoogte (m)": 2.07
+  },
+  "WE973W4X": {
+    "Opnametype": "Cyclorama",
+    "Opnamedatum": "2024-02-25T14:06:00",
+    "X": 72565.71,
+    "sigma_X": 0.01,
+    "Y": 167987.38,
+    "sigma_Y": 0.01,
+    "Z": 21.0,
+    "sigma_Z": 0.01,
+    "Yaw": 0.85,
+    "sigma_Yaw": 0.01,
+    "Heading": -25.79,
+    "Coordinaatsysteem": "EPSG:31370 - Belge 1972 / Belgian Lambert 72",
+    "Hoogtesysteem": 5710,
+    "Camerahoogte (m)": 2.07
+  }
+}
