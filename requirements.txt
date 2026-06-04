@@ -1,3 +1,7 @@
 jupyter
+mapbox-earcut
+numpy
+open3d
 pandas
 matplotlib
+shapely

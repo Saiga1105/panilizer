@@ -1,0 +1,16 @@
+{
+  "input_json": "input/outputID1/Output/lod3.json",
+  "output_json": "output/1_panels.json",
+  "selected_building_indices": [
+    0
+  ],
+  "panel_width": 1.2,
+  "panel_height": 2.4,
+  "target_surface_types": [
+    "WallSurface"
+  ],
+  "color_mode": "type",
+  "tolerance": 0.0001,
+  "precision": 6,
+  "visualize": true
+}
