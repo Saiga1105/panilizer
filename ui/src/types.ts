@@ -62,9 +62,9 @@ export type PanelizationPayload = {
     total_unique_panels: number;
     total_specialized_panels: number;
     total_unique_types: number;
-    cost_total: number;
-    cost_unique_panel_types: number;
-    cost_panel_elements: number;
+    cost_total?: number;
+    cost_unique_panel_types?: number;
+    cost_panel_elements?: number;
   };
   parts: PanelPart[];
 };

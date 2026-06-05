@@ -61,7 +61,7 @@ export default function App() {
         <div className="viewerFrame">
           <Viewer building={data?.building} panelization={data?.panelization} layers={layers} />
         </div>
-        <Summary panelization={data?.panelization} error={error} />
+        <Summary panelization={data?.panelization} settings={settings} error={error} />
       </section>
     </main>
   );
