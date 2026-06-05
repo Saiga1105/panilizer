@@ -6,11 +6,11 @@
   ],
   "panel_width": 1.2,
   "panel_height": 2.4,
+  "cost_per_unique_panel_type": 250.0,
+  "cost_per_panel_element": 45.0,
   "target_surface_types": [
     "WallSurface"
   ],
   "color_mode": "type",
-  "tolerance": 0.0001,
-  "precision": 6,
   "visualize": true
 }

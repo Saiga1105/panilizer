@@ -1,7 +1,10 @@
 jupyter
+fastapi
 mapbox-earcut
 numpy
 open3d
 pandas
 matplotlib
+pydantic
 shapely
+uvicorn

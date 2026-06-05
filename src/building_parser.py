@@ -132,9 +132,10 @@ def _color(semantic_type: str) -> list[float]:
 
 def _orient_triangles_outward(vertices: list[list[float]], triangles: list[list[int]], object_center: np.ndarray):
     pts = np.asarray(vertices, dtype=float)
+    centered = pts - pts.mean(axis=0)
     normal = np.zeros(3, dtype=float)
     for i0, i1, i2 in triangles:
-        normal += np.cross(pts[i1] - pts[i0], pts[i2] - pts[i0])
+        normal += np.cross(centered[i1] - centered[i0], centered[i2] - centered[i0])
     if np.linalg.norm(normal) < 1e-12:
         return triangles
     if np.dot(normal, pts.mean(axis=0) - object_center) < 0:
@@ -142,18 +143,33 @@ def _orient_triangles_outward(vertices: list[list[float]], triangles: list[list[
     return triangles
 
 
+def _clean_ring_indices(ring: list) -> list[int]:
+    cleaned = []
+    for vertex_index in ring or []:
+        if not isinstance(vertex_index, int):
+            continue
+        if cleaned and cleaned[-1] == vertex_index:
+            continue
+        cleaned.append(vertex_index)
+    if len(cleaned) > 1 and cleaned[0] == cleaned[-1]:
+        cleaned.pop()
+    return cleaned
+
+
 def _surface_rings_xyz(surface: list, vertices_world: np.ndarray) -> list[np.ndarray]:
-    return [
-        np.asarray([vertices_world[vertex_index] for vertex_index in ring], dtype=float)
-        for ring in surface or []
-        if isinstance(ring, list) and len(ring) >= 3
-    ]
+    rings = []
+    for ring in surface or []:
+        cleaned = _clean_ring_indices(ring)
+        if len(cleaned) >= 3:
+            rings.append(np.asarray([vertices_world[vertex_index] for vertex_index in cleaned], dtype=float))
+    return rings
 
 
 def _ring_normal(ring: np.ndarray) -> np.ndarray:
+    centered = ring - ring.mean(axis=0)
     normal = np.zeros(3, dtype=float)
-    for index, point in enumerate(ring):
-        next_point = ring[(index + 1) % len(ring)]
+    for index, point in enumerate(centered):
+        next_point = centered[(index + 1) % len(centered)]
         normal += np.cross(point, next_point)
     norm = np.linalg.norm(normal)
     if norm < 1e-12:
@@ -164,70 +180,124 @@ def _ring_normal(ring: np.ndarray) -> np.ndarray:
 def _ring_projection_axes(ring: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     origin = ring.mean(axis=0)
     normal = _ring_normal(ring)
-    axis_u = ring[1] - ring[0]
+
+    edge_vectors = [
+        ring[(index + 1) % len(ring)] - ring[index]
+        for index in range(len(ring))
+    ]
+    axis_u = max(edge_vectors, key=lambda edge: np.linalg.norm(edge))
     axis_u = axis_u - np.dot(axis_u, normal) * normal
     if np.linalg.norm(axis_u) < 1e-12:
-        axis_u = np.array([1.0, 0.0, 0.0])
+        centered = ring - origin
+        _, eigvecs = np.linalg.eigh(np.cov(centered.T))
+        axis_u = eigvecs[:, -1] - np.dot(eigvecs[:, -1], normal) * normal
+    if np.linalg.norm(axis_u) < 1e-12:
+        fallback = np.array([1.0, 0.0, 0.0])
+        if abs(np.dot(fallback, normal)) > 0.95:
+            fallback = np.array([0.0, 1.0, 0.0])
+        axis_u = fallback - np.dot(fallback, normal) * normal
     axis_u = axis_u / np.linalg.norm(axis_u)
     axis_v = np.cross(normal, axis_u)
     axis_v = axis_v / np.linalg.norm(axis_v)
     return origin, axis_u, axis_v
 
 
+def _project_rings_2d(
+    rings: list[np.ndarray],
+    origin: np.ndarray,
+    axis_u: np.ndarray,
+    axis_v: np.ndarray,
+) -> list[np.ndarray]:
+    return [
+        np.asarray([
+            [np.dot(point - origin, axis_u), np.dot(point - origin, axis_v)]
+            for point in ring
+        ], dtype=np.float64)
+        for ring in rings
+    ]
+
+
+def _signed_area_2d(ring: np.ndarray) -> float:
+    x = ring[:, 0]
+    y = ring[:, 1]
+    return float(0.5 * np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y))
+
+
+def _orient_projected_rings(projected_rings: list[np.ndarray]) -> list[np.ndarray]:
+    oriented = []
+    for index, ring in enumerate(projected_rings):
+        area = _signed_area_2d(ring)
+        if index == 0 and area < 0:
+            ring = ring[::-1]
+        elif index > 0 and area > 0:
+            ring = ring[::-1]
+        oriented.append(ring)
+    return oriented
+
+
+def _rebuild_vertices_from_2d(
+    projected_rings: list[np.ndarray],
+    origin: np.ndarray,
+    axis_u: np.ndarray,
+    axis_v: np.ndarray,
+) -> np.ndarray:
+    return np.vstack([
+        np.asarray([origin + point[0] * axis_u + point[1] * axis_v for point in ring], dtype=float)
+        for ring in projected_rings
+    ])
+
+
+def _fallback_triangulate_with_shapely(
+    projected_rings: list[np.ndarray],
+    origin: np.ndarray,
+    axis_u: np.ndarray,
+    axis_v: np.ndarray,
+) -> tuple[list[list[float]], list[list[int]]]:
+    if Polygon is None or triangulate is None:
+        return [], []
+
+    polygon = Polygon(projected_rings[0].tolist(), [ring.tolist() for ring in projected_rings[1:]])
+    if not polygon.is_valid:
+        polygon = polygon.buffer(0)
+    if polygon.is_empty:
+        return [], []
+
+    vertices = []
+    triangles = []
+    vertex_index = {}
+
+    def add_point(point):
+        key = (round(float(point[0]), 9), round(float(point[1]), 9))
+        if key not in vertex_index:
+            vertex_index[key] = len(vertices)
+            vertices.append((origin + key[0] * axis_u + key[1] * axis_v).tolist())
+        return vertex_index[key]
+
+    for triangle in triangulate(polygon):
+        if triangle.intersection(polygon).area < triangle.area - 1e-8:
+            continue
+        coords = list(triangle.exterior.coords)[:-1]
+        if len(coords) == 3:
+            triangles.append([add_point(point) for point in coords])
+    return vertices, triangles
+
+
 def _triangulate_surface_rings(rings: list[np.ndarray]) -> tuple[list[list[float]], list[list[int]]]:
     if not rings:
         return [], []
 
-    mesh_vertices = np.vstack(rings)
-    if len(rings) == 1:
-        outer_count = len(rings[0])
-        triangles = [[0, index, index + 1] for index in range(1, outer_count - 1)]
-        return mesh_vertices.tolist(), triangles
-
     origin, axis_u, axis_v = _ring_projection_axes(rings[0])
-    if earcut is None:
-        if Polygon is None or triangulate is None:
-            outer_count = len(rings[0])
-            triangles = [[0, index, index + 1] for index in range(1, outer_count - 1)]
-            return rings[0].tolist(), triangles
+    projected_rings = _orient_projected_rings(_project_rings_2d(rings, origin, axis_u, axis_v))
+    mesh_vertices = _rebuild_vertices_from_2d(projected_rings, origin, axis_u, axis_v)
 
-        projected_rings = [
-            [
-                (float(np.dot(point - origin, axis_u)), float(np.dot(point - origin, axis_v)))
-                for point in ring
-            ]
-            for ring in rings
-        ]
-        polygon = Polygon(projected_rings[0], projected_rings[1:])
-        if not polygon.is_valid:
-            polygon = polygon.buffer(0)
+    if earcut is not None:
+        vertices_2d = np.vstack(projected_rings).astype(np.float64)
+        ring_ends = np.cumsum([len(ring) for ring in projected_rings]).astype(np.uint32)
+        triangles = earcut.triangulate_float64(vertices_2d, ring_ends).reshape((-1, 3)).tolist()
+        if triangles:
+            return mesh_vertices.tolist(), triangles
 
-        vertices = []
-        triangles = []
-        vertex_index = {}
-
-        def add_point(point):
-            key = (round(float(point[0]), 9), round(float(point[1]), 9))
-            if key not in vertex_index:
-                vertex_index[key] = len(vertices)
-                vertices.append((origin + key[0] * axis_u + key[1] * axis_v).tolist())
-            return vertex_index[key]
-
-        for triangle in triangulate(polygon):
-            if triangle.intersection(polygon).area < triangle.area - 1e-8:
-                continue
-            coords = list(triangle.exterior.coords)[:-1]
-            if len(coords) == 3:
-                triangles.append([add_point(point) for point in coords])
-        return vertices, triangles
-
-    vertices_2d = np.asarray([
-        [np.dot(point - origin, axis_u), np.dot(point - origin, axis_v)]
-        for point in mesh_vertices
-    ], dtype=np.float64)
-    ring_ends = np.cumsum([len(ring) for ring in rings]).astype(np.uint32)
-    triangles = earcut.triangulate_float64(vertices_2d, ring_ends).reshape((-1, 3)).tolist()
-    return mesh_vertices.tolist(), triangles
+    return _fallback_triangulate_with_shapely(projected_rings, origin, axis_u, axis_v)
 
 
 def _surface_mesh(surface: list, vertices_world: np.ndarray, object_center: np.ndarray, color: list[float]):

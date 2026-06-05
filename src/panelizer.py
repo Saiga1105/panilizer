@@ -4,7 +4,12 @@ from pathlib import Path
 import numpy as np
 import open3d as o3d
 from shapely.geometry import GeometryCollection, MultiPolygon, Point, Polygon, box
-from shapely.ops import triangulate
+from shapely.ops import triangulate, unary_union
+
+try:
+    import mapbox_earcut as earcut
+except ImportError:
+    earcut = None
 
 
 DEFAULT_CONFIG = {
@@ -13,6 +18,8 @@ DEFAULT_CONFIG = {
     "selected_building_indices": [0],
     "panel_width": 1.2,
     "panel_height": 2.4,
+    "cost_per_unique_panel_type": 250.0,
+    "cost_per_panel_element": 45.0,
     "target_surface_types": ["WallSurface"],
     "color_mode": "type",
     "tolerance": 0.0001,
@@ -102,15 +109,36 @@ def _project_rings(
     return projected
 
 
-def _wall_polygon(projected_rings: list[np.ndarray], tolerance: float) -> Polygon:
+def _valid_polygon(geometry):
+    if geometry.is_empty:
+        return geometry
+    if not geometry.is_valid:
+        geometry = geometry.buffer(0)
+    return geometry
+
+
+def _wall_clip_data(projected_rings: list[np.ndarray]) -> dict:
     outer = [tuple(point) for point in projected_rings[0]]
-    holes = [[tuple(point) for point in ring] for ring in projected_rings[1:]]
-    polygon = Polygon(outer, holes)
-    if not polygon.is_valid:
-        polygon = polygon.buffer(0)
-    if polygon.is_empty:
+    outer_polygon = _valid_polygon(Polygon(outer))
+    opening_polygons = [
+        _valid_polygon(Polygon([tuple(point) for point in ring]))
+        for ring in projected_rings[1:]
+    ]
+    opening_polygons = [
+        opening
+        for opening in opening_polygons
+        if not opening.is_empty and opening.area > 0
+    ]
+    opening_union = unary_union(opening_polygons) if opening_polygons else GeometryCollection()
+    wall_polygon = _valid_polygon(outer_polygon.difference(opening_union))
+    if wall_polygon.is_empty:
         raise ValueError("Wall polygon is empty after processing openings")
-    return polygon.buffer(0) if tolerance > 0 else polygon
+    return {
+        "outer_polygon": outer_polygon,
+        "opening_polygons": opening_polygons,
+        "opening_union": opening_union,
+        "wall_polygon": wall_polygon,
+    }
 
 
 def _edges(min_value: float, max_value: float, target_size: float, tolerance: float) -> list[float]:
@@ -153,24 +181,69 @@ def _candidate_touches_wall(candidate: dict, wall_polygon: Polygon, tolerance: f
     )
 
 
-def _clip_panel_to_wall(candidate: dict, wall_polygon: Polygon, tolerance: float):
-    clipped = candidate["rectangle"].intersection(wall_polygon)
+def _clip_panel_to_outer_boundary(candidate: dict, outer_polygon: Polygon, tolerance: float):
+    clipped = _valid_polygon(candidate["rectangle"].intersection(outer_polygon))
     if clipped.is_empty or clipped.area <= tolerance:
         return None
-    return clipped.buffer(0)
+    return clipped
 
 
-def _iter_polygons(geometry):
+def _subtract_openings_from_panel(clipped_to_outer, opening_union, tolerance: float):
+    if opening_union.is_empty:
+        return clipped_to_outer
+    clipped = _valid_polygon(clipped_to_outer.difference(opening_union))
+    if clipped.is_empty or clipped.area <= tolerance:
+        return None
+    return clipped
+
+
+def _clip_panel_to_wall(candidate: dict, wall_clip_data: dict, tolerance: float):
+    clipped_to_outer = _clip_panel_to_outer_boundary(
+        candidate,
+        wall_clip_data["outer_polygon"],
+        tolerance,
+    )
+    if clipped_to_outer is None:
+        return None
+    return _subtract_openings_from_panel(
+        clipped_to_outer,
+        wall_clip_data["opening_union"],
+        tolerance,
+    )
+
+
+def _iter_polygons(geometry, tolerance: float = 0.0):
     if isinstance(geometry, Polygon):
-        if not geometry.is_empty and geometry.area > 0:
+        if not geometry.is_empty and geometry.area > tolerance:
             yield geometry
     elif isinstance(geometry, MultiPolygon):
         for polygon in geometry.geoms:
-            if not polygon.is_empty and polygon.area > 0:
+            if not polygon.is_empty and polygon.area > tolerance:
                 yield polygon
     elif isinstance(geometry, GeometryCollection):
         for item in geometry.geoms:
-            yield from _iter_polygons(item)
+            yield from _iter_polygons(item, tolerance)
+
+
+def _normalize_panel_piece(polygon: Polygon, tolerance: float) -> Polygon | None:
+    polygon = _valid_polygon(polygon)
+    if polygon.is_empty or polygon.area <= tolerance:
+        return None
+    if not isinstance(polygon, Polygon):
+        pieces = list(_iter_polygons(polygon, tolerance))
+        if not pieces:
+            return None
+        polygon = max(pieces, key=lambda item: item.area)
+    return polygon
+
+
+def _normalize_panel_geometry(geometry, tolerance: float) -> list[Polygon]:
+    pieces = []
+    for polygon in _iter_polygons(_valid_polygon(geometry), tolerance):
+        normalized = _normalize_panel_piece(polygon, tolerance)
+        if normalized is not None:
+            pieces.append(normalized)
+    return sorted(pieces, key=lambda item: (item.bounds[0], item.bounds[1], -item.area))
 
 
 def _polygon_to_uv_rings(polygon: Polygon, precision: int) -> list[list[list[float]]]:
@@ -231,14 +304,27 @@ def _mesh_from_panel_polygons(
             vertices.append(_uv_to_xyz(key, origin, horizontal_axis, vertical_axis))
         return vertex_index[key]
 
+    def add_triangle_coords(coords):
+        triangles.append([add_point(point) for point in coords])
+
     for polygon in polygons:
+        if earcut is not None:
+            rings = [list(polygon.exterior.coords)[:-1]]
+            rings.extend(list(interior.coords)[:-1] for interior in polygon.interiors)
+            vertices_2d = np.asarray([point for ring in rings for point in ring], dtype=np.float64)
+            ring_ends = np.cumsum([len(ring) for ring in rings]).astype(np.uint32)
+            panel_triangles = earcut.triangulate_float64(vertices_2d, ring_ends).reshape((-1, 3))
+            for triangle in panel_triangles:
+                add_triangle_coords([tuple(vertices_2d[index]) for index in triangle])
+            continue
+
         for triangle in triangulate(polygon):
             if triangle.intersection(polygon).area < triangle.area - 1e-8:
                 continue
             coords = list(triangle.exterior.coords)[:-1]
             if len(coords) != 3:
                 continue
-            triangles.append([add_point(point) for point in coords])
+            add_triangle_coords(coords)
 
     mesh = o3d.geometry.TriangleMesh()
     mesh.vertices = o3d.utility.Vector3dVector(np.asarray(vertices, dtype=float))
@@ -271,7 +357,7 @@ def _build_panel_record(
     tolerance: float,
     precision: int,
 ) -> tuple[dict, list[Polygon]]:
-    polygons = list(_iter_polygons(clipped_geometry))
+    polygons = _normalize_panel_geometry(clipped_geometry, tolerance)
     width, height = _panel_dimensions(candidate, clipped_geometry)
     width = _round(width, precision)
     height = _round(height, precision)
@@ -291,6 +377,7 @@ def _build_panel_record(
         "is_residual_height": is_residual_height,
         "is_specialized": is_clipped,
         "n_vertices": sum(len(list(polygon.exterior.coords)) - 1 for polygon in polygons),
+        "n_holes": sum(len(polygon.interiors) for polygon in polygons),
         "n_pieces": len(polygons),
         "polygons_uv": [_polygon_to_uv_rings(polygon, precision) for polygon in polygons],
         "polygons_xyz": [
@@ -315,7 +402,8 @@ def panelize_wall_surface(
 ) -> tuple[dict, list]:
     origin, normal, horizontal_axis, vertical_axis = _wall_plane_axes(wall_surface)
     projected_rings = _project_rings(wall_surface, origin, horizontal_axis, vertical_axis)
-    wall_polygon = _wall_polygon(projected_rings, tolerance)
+    wall_clip_data = _wall_clip_data(projected_rings)
+    wall_polygon = wall_clip_data["wall_polygon"]
     min_u, min_v, max_u, max_v = wall_polygon.bounds
     u_edges = _edges(min_u, max_u, panel_width, tolerance)
     v_edges = _edges(min_v, max_v, panel_height, tolerance)
@@ -331,7 +419,7 @@ def panelize_wall_surface(
                 skipped += 1
                 continue
 
-            clipped = _clip_panel_to_wall(candidate, wall_polygon, tolerance)
+            clipped = _clip_panel_to_wall(candidate, wall_clip_data, tolerance)
             if clipped is None:
                 skipped += 1
                 continue
@@ -376,7 +464,6 @@ def panelize_wall_surface(
         "n_unique_panels": sum(1 for panel in panels if panel["is_unique"]),
         "n_specialized_panels": sum(1 for panel in panels if panel["is_specialized"]),
         "n_unique_types": len(unique_types),
-        "n_skipped": skipped,
         "normal": np.round(normal, precision).tolist(),
         "panels": panels,
     }
@@ -400,6 +487,8 @@ def panelize_buildings(
     config = dict(DEFAULT_CONFIG if config is None else {**DEFAULT_CONFIG, **config})
     panel_width = float(config["panel_width"])
     panel_height = float(config["panel_height"])
+    cost_per_unique_panel_type = float(config["cost_per_unique_panel_type"])
+    cost_per_panel_element = float(config["cost_per_panel_element"])
     tolerance = float(config["tolerance"])
     precision = int(config["precision"])
 
@@ -409,7 +498,6 @@ def panelize_buildings(
     total_unique_panels = 0
     total_specialized_panels = 0
     total_unique_types = set()
-    total_skipped = 0
     total_walls = 0
 
     for building in buildings:
@@ -441,7 +529,6 @@ def panelize_buildings(
             for panel in wall["panels"]
             if panel["is_unique"]
         }
-        part_total_skipped = sum(wall["n_skipped"] for wall in wall_entries)
 
         parts.append({
             "building_id": building["id"],
@@ -450,14 +537,12 @@ def panelize_buildings(
             "total_unique_panels": part_total_unique_panels,
             "total_specialized_panels": part_total_specialized_panels,
             "total_unique_types": len(part_unique_types),
-            "total_skipped": part_total_skipped,
             "walls": wall_entries,
         })
         all_panel_meshes.extend(part_panel_meshes)
         total_panels += part_total_panels
         total_unique_panels += part_total_unique_panels
         total_specialized_panels += part_total_specialized_panels
-        total_skipped += part_total_skipped
         total_walls += len(wall_entries)
 
     parent_id = str(parts[0]["parent_id"]) if parts else ""
@@ -466,9 +551,10 @@ def panelize_buildings(
         "config": {
             "panel_width": panel_width,
             "panel_height": panel_height,
+            "cost_per_unique_panel_type": cost_per_unique_panel_type,
+            "cost_per_panel_element": cost_per_panel_element,
             "target_surface_types": config["target_surface_types"],
             "color_mode": config["color_mode"],
-            "tolerance": tolerance,
         },
         "summary": {
             "n_parts": len(parts),
@@ -477,7 +563,13 @@ def panelize_buildings(
             "total_unique_panels": total_unique_panels,
             "total_specialized_panels": total_specialized_panels,
             "total_unique_types": len(total_unique_types),
-            "total_skipped": total_skipped,
+            "cost_total": round(
+                len(total_unique_types) * cost_per_unique_panel_type
+                + total_panels * cost_per_panel_element,
+                2,
+            ),
+            "cost_unique_panel_types": round(len(total_unique_types) * cost_per_unique_panel_type, 2),
+            "cost_panel_elements": round(total_panels * cost_per_panel_element, 2),
         },
         "parts": parts,
         "panel_meshes": all_panel_meshes,
