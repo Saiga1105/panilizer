@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Panilizer Demo</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.171.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.171.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="panel">
+        <div class="brand">Panilizer</div>
+        <p class="intro">LoD3 CityJSON walls converted into clipped facade panel layouts.</p>
+
+        <div class="controls">
+          <label><input id="layer-building" type="checkbox" checked /> Original building</label>
+          <label><input id="layer-panels" type="checkbox" checked /> Panels</label>
+          <label><input id="layer-specialized" type="checkbox" checked /> Specialized panels</label>
+          <label><input id="layer-roofs" type="checkbox" checked /> Roofs</label>
+          <label><input id="layer-balconies" type="checkbox" checked /> Balconies</label>
+        </div>
+
+        <div class="stats">
+          <div><span>Walls</span><strong id="stat-walls">-</strong></div>
+          <div><span>Panels</span><strong id="stat-panels">-</strong></div>
+          <div><span>Specialized</span><strong id="stat-specialized">-</strong></div>
+          <div><span>Estimated cost</span><strong id="stat-cost">-</strong></div>
+        </div>
+      </aside>
+
+      <section class="viewer">
+        <canvas id="scene"></canvas>
+      </section>
+    </main>
+
+    <script type="module" src="viewer.js"></script>
+  </body>
+</html>

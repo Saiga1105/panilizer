@@ -9,7 +9,7 @@ class PanelizerSettings(BaseModel):
 
 
 class PanelizeRequest(BaseModel):
-    input_json: str = "input/outputID1/Output/lod3.json"
+    input_json: str = "input/outputID2/Output/lod3.json"
     output_json: str | None = None
     selected_building_indices: list[int] | None = [0]
     settings: PanelizerSettings = Field(default_factory=PanelizerSettings)
@@ -17,5 +17,5 @@ class PanelizeRequest(BaseModel):
 
 
 class BuildingRequest(BaseModel):
-    input_json: str = "input/outputID1/Output/lod3.json"
+    input_json: str = "input/outputID2/Output/lod3.json"
     selected_building_indices: list[int] | None = [0]

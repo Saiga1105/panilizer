@@ -6,7 +6,7 @@ import { Viewer } from "./components/Viewer";
 import type { Layers, PanelizeResponse, Settings } from "./types";
 
 const initialSettings: Settings = {
-  input_json: "input/outputID1/Output/lod3.json",
+  input_json: "input/outputID2/Output/lod3.json",
   selected_building_indices: [0],
   panel_width: 1.2,
   panel_height: 2.4,

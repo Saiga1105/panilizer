@@ -31,7 +31,12 @@ def health():
 
 @app.get("/config")
 def config():
-    return load_panelizer_config("config/panelizer_config.json")
+    config_data = load_panelizer_config("config/panelizer_config.json")
+    return {
+        key: value
+        for key, value in config_data.items()
+        if key not in {"tolerance", "precision"}
+    }
 
 
 @app.post("/buildings")

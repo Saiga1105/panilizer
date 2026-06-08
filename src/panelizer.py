@@ -13,8 +13,8 @@ except ImportError:
 
 
 DEFAULT_CONFIG = {
-    "input_json": "input/outputID1/Output/lod3.json",
-    "output_json": "output/1_panels.json",
+    "input_json": "input/outputID2/Output/lod3.json",
+    "output_json": "output/2_panels.json",
     "selected_building_indices": [0],
     "panel_width": 1.2,
     "panel_height": 2.4,

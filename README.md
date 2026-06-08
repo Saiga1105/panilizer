@@ -1,13 +1,49 @@
 # Panilizer
 
-Panilizer parses LoD3 CityJSON building surfaces and generates wall panel layouts with clipped specialized panels around facade boundaries and openings.
+Panilizer parses LoD3 CityJSON buildings and generates facade panel layouts. It separates semantic building parts, covers wall surfaces with configurable panels, clips specialized panels around facade boundaries/openings, and estimates panelization cost.
+
+![Panilizer preview](pics/1.png)
+
+## What It Does
+
+- Parses LoD3 CityJSON building geometry.
+- Keeps semantic parts such as walls, roofs, balconies, windows, doors, and reveals separate.
+- Generates standard and specialized wall panels from panel width/height settings.
+- Clips specialized panels to wall outlines and openings so they do not protrude.
+- Exports panel JSON for downstream workflows.
+- Provides a local API/UI and a static GitHub Pages demo.
+
+## Interactive Demo
+
+This repository includes a static Three.js demo in `docs/`. It shows the original building and the generated panel layout with rotatable 3D controls and layer toggles.
+
+To view it locally:
+
+```powershell
+python -m http.server 8080 -d docs
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8080
+```
+
+For GitHub Pages, set the Pages source to:
+
+```text
+Branch: main
+Folder: /docs
+```
 
 ## Structure
 
 - `main.py` - CLI entry point for batch panel JSON generation.
 - `config/` - panelizer settings.
+- `docs/` - static GitHub Pages demo with precomputed geometry.
 - `input/` - source CityJSON/building data.
 - `output/` - generated panel JSON files.
+- `pics/` - README and documentation images.
 - `src/building_parser.py` - CityJSON LoD3 parser.
 - `src/panelizer.py` - wall panel generation.
 - `src/service.py` - shared backend/CLI orchestration.
@@ -25,6 +61,8 @@ pip install -r requirements.txt
 If `uvicorn`, `open3d`, or other Python packages are not found, make sure the virtual environment is active and run `pip install -r requirements.txt` again.
 
 ## Batch Run
+
+The default example uses `input/outputID2/Output/lod3.json` and writes `output/2_panels.json`.
 
 ```powershell
 python main.py --config config/panelizer_config.json
